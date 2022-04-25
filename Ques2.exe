@@ -1,0 +1,146 @@
+#include <linux/gpio.h>
+#include <linux/interrupt.h>
+#include <linux/module.h>
+#include <linux/timer.h>
+
+#define GPIO_IN 23
+#define GPIO_LED1 9
+#define GPIO_LED2 11 
+
+// Define the delay to postpone interrupt action 
+
+#define DELAY 1 // 1 second
+
+// Define interrupt request number 
+
+#define BUTTON_IRQ gpio_to_irq(GPIO_IN)
+
+// Declare a timer 
+
+static struct timer_list timer_led;
+
+static void switch_leds_state(unsigned long unused)
+{
+	static int pin_value = 0;
+
+	gpio_set_value(GPIO_LED1, pin_value); 
+	pin_value = 1 - pin_value;
+	gpio_set_value(GPIO_LED2, pin_value);
+        printk(KERN_INFO "Leds state switched!");
+	del_timer(& timer_led);
+}
+
+// Create the interrupt handler 
+ 
+static irqreturn_t my_handler(int irq, void * ident)
+{
+	printk(KERN_INFO "\nInterrupt received from GPIO pin %d", GPIO_IN);
+	printk(KERN_INFO "Leds state switch in %d second... ", DELAY);
+
+	// schedule action to happen in DELAY second : 
+	
+	init_timer(& timer_led);
+	timer_led.function = switch_leds_state;
+	
+	//timer_led.data = 0; // non utilise
+	
+	timer_led.expires = jiffies + DELAY*HZ;
+	add_timer(& timer_led);
+	return IRQ_HANDLED;
+}
+
+// Init
+
+static int __init exemple_init (void)
+{
+	int err;
+	
+	printk(KERN_INFO "Loading GPIO module \n");
+
+	// Request GPIO for led 1 :
+
+	if ((err = gpio_request(GPIO_LED1, THIS_MODULE->name)) !=0)
+	{
+		return err;
+        }
+
+	// Set GPIO_LED1 to output mode :
+
+	if ((err = gpio_direction_output(GPIO_LED1, 1)) !=0)
+	{
+                gpio_free(GPIO_LED1);
+                return err;
+        }
+
+	// Request GPIO for led 2 : 
+
+	if ((err = gpio_request(GPIO_LED2, THIS_MODULE->name)) !=0)
+	{	
+                gpio_free(GPIO_LED1);	
+		return err;
+        }
+
+	// Set GPIO_LED2 to output mode :
+
+	if ((err = gpio_direction_output(GPIO_LED2, 0)) !=0)
+	{
+                gpio_free(GPIO_LED1);
+                gpio_free(GPIO_LED2);
+                return err;
+        }
+
+        // Request GPIO_IN : 
+
+        if ((err = gpio_request(GPIO_IN, THIS_MODULE->name)) !=0)
+	{
+     		gpio_free(GPIO_LED1);
+                gpio_free(GPIO_LED2);
+		return err;
+        }
+   
+    	// Set GPIO_IN to input mode :
+
+        if ((err = gpio_direction_input(GPIO_IN)) !=0)
+	{
+		gpio_free(GPIO_LED1);
+                gpio_free(GPIO_LED2);
+                gpio_free(GPIO_IN);
+                return err;
+        }
+
+	// Request BUTTON_IRQ and setting its type to trigger rising : 
+
+	printk(KERN_INFO "Requesting irq %d\n", BUTTON_IRQ);
+	if((err = request_irq      (gpio_to_irq(GPIO_IN), my_handler, IRQF_SHARED | IRQF_TRIGGER_RISING, THIS_MODULE->name, THIS_MODULE->name)) != 0)
+	{
+		printk(KERN_INFO "Error %d: could not request irq: %d\n", err, GPIO_IN);
+		gpio_free(GPIO_LED1);	
+		gpio_free(GPIO_LED2);
+		gpio_free(GPIO_IN);
+		return err;
+	}
+
+        printk(KERN_INFO "Waiting for interrupts ... \n");
+
+	return 0; 
+
+} 
+
+// Clean up : 
+
+static void __exit exemple_exit (void) 
+{
+
+	free_irq(gpio_to_irq(GPIO_IN), THIS_MODULE->name);	
+	gpio_free(GPIO_LED1);	
+	gpio_free(GPIO_LED2);
+	gpio_free(GPIO_IN);
+}
+
+module_init(exemple_init);
+module_exit(exemple_exit);
+
+MODULE_AUTHOR("Pierre LE COZ");
+MODULE_DESCRIPTION("GPIO interrupt and timers test module for embedded Linux");
+MODULE_LICENSE("GPL");
+
